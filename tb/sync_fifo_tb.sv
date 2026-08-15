@@ -192,6 +192,7 @@ module sync_fifo_tb;
     assert property (full_ready_relationship)
         else $fatal(1, "DUT claimed to have space when queue should have been full");
 
+    // Handles coverage counters
     always @(posedge clk) begin
         unique case ({in_ready && in_valid, out_ready && out_valid})
             2'b00: ;
@@ -230,6 +231,7 @@ module sync_fifo_tb;
         end
     end
 
+    // Handles reference queue
     always @(posedge clk) begin
         if (reset) begin
             expected_queue.delete();
@@ -256,8 +258,214 @@ module sync_fifo_tb;
     end
 
     initial begin
-        // intentionally blank for the time being
-        $display("");
+        reset = 1'b0;
+        in_valid = 1'b0;
+        out_ready = 1'b0;
+        in_data = '0;
+
+        //-----------------------------------------------
+        // Verify proper reset behavior
+        reset_dut();
+
+        assert (!out_valid)
+            else $fatal(1, "FIFO not empty after reset");
+
+        assert (in_ready)
+            else $fatal(1, "FIFO not ready after reset");
+        //-----------------------------------------------
+
+
+        //-----------------------------------------------
+        // Verify proper behavior upon sending and consuming one piece of data
+        send_one(32'hAAAA_AAAA);
+
+        assert (out_valid)
+            else $fatal(1, "FIFO did not become non-empty");
+
+        consume_one();
+
+        assert (!out_valid)
+            else $fatal(1, "FIFO did not become empty after only item was consumed");
+        //-----------------------------------------------
+
+        
+        //-----------------------------------------------
+        // Verify FIFO behavior when full
+        send_n(32'hBBBB_BBBB, DEPTH);
+
+        assert(out_valid)
+            else $fatal(1, "Full FIFO should have valid output");
+
+        assert(int'(dut.count) == DEPTH)
+            else $fatal(1, "FIFO count did not reach DEPTH");
+
+        assert(!in_ready)
+            else $fatal(1, "Full FIFO should apply backpressure");
+        //-----------------------------------------------
+
+        
+        //-----------------------------------------------
+        // Verify behavior while FIFO is full and stalled
+        fork
+            begin
+                send_one(32'hCCCC_CCCC);
+            end
+
+            begin
+                repeat (2) begin
+                    stall_consumer(1);
+                    assert(!in_ready)
+                        else $fatal(1, "Stalled, filled FIFO should not be ready for more data");
+
+                    assert(int'(dut.count) == DEPTH)
+                        else $fatal(1, "FIFO count changed while full and stalled");
+                end
+
+                consume_one();
+            end
+        join
+
+        drain();
+        //-----------------------------------------------
+
+
+        //-----------------------------------------------
+        // Verify wraparound behavior is functional
+        send_n(32'hDDDD_DDDD, DEPTH);
+        consume_n(2);
+        send_n(32'hEEEE_EEEE, 2);
+        consume_n(DEPTH);
+
+        assert (write_wrap)
+            else $fatal(1, "Write pointer did not wraparound");
+
+        assert (read_wrap)
+            else $fatal(1, "Read pointer did not wraparound");
+        //-----------------------------------------------
+
+
+        //-----------------------------------------------
+        // Verify behavior while FIFO is empty
+        out_ready = 1'b1;
+
+        repeat (3) begin
+            @(posedge clk);
+
+            assert (!out_valid)
+                else $fatal(1, "Empty FIFO claimed valid output");
+
+            assert (dut.count == 0)
+                else $fatal(1, "FIFO count changed while empty");
+        end
+
+        @(negedge clk);
+        out_ready = 1'b0;
+        //-----------------------------------------------
+
+
+        //-----------------------------------------------
+        // Verify sustained simultaneous producer/consumer traffic
+        send_n(32'hFFFF_FFFF, 2);
+
+        fork
+            begin
+                send_n(32'h1111_1111, 16);
+            end
+
+            begin
+                consume_n(16);
+            end
+        join
+
+        drain();
+
+        assert (simultaneous_xfers > 0)
+            else $fatal(1, "No simultaneous input/output transfers occurred");
+        //-----------------------------------------------
+
+
+        //-----------------------------------------------
+        // Verify reset after prior FIFO activity
+        send_n(32'h2222_2222, 3);
+
+        assert (expected_queue.size() == 3)
+            else $fatal(1, "Reference queue did not record pre-reset data");
+
+        reset_dut();
+
+        assert (dut.count == 0)
+            else $fatal(1, "FIFO count not cleared by reset");
+
+        assert (!out_valid)
+            else $fatal(1, "FIFO claimed valid output after reset");
+
+        assert (in_ready)
+            else $fatal(1, "FIFO not ready for new inputs after reset");
+
+        assert (expected_queue.size() == 0)
+            else $fatal(1, "Reference queue not cleared by reset");
+        //-----------------------------------------------
+
+
+        //-----------------------------------------------
+        // Verify randomized producer/consumer interactions
+        fork
+            begin
+                random_producer(1000);
+            end
+
+            begin
+                random_consumer(1000);
+            end
+        join
+
+        assert (expected_queue.size() == 0)
+            else $fatal(
+                1, "Random test ended with %0d expected transactions pending",
+                expected_queue.size()
+            );
+        //-----------------------------------------------
+
+
+        //-----------------------------------------------
+        // Verify required testing scenarios were covered
+        assert (reached_empty)
+            else $fatal(1, "FIFO never transitioned to empty");
+
+        assert (reached_full)
+            else $fatal(1, "FIFO never transitioned to full");
+
+        assert (read_wrap)
+            else $fatal(1, "Read pointer wraparound was not confirmed");
+
+        assert (write_wrap)
+            else $fatal(1, "Write pointer wraparound was not confirmed");
+
+        assert (stall_cycles > 0)
+            else $fatal(1, "No valid output stalls occurred");
+
+        assert (simultaneous_xfers > 0)
+            else $fatal(1, "No simultaneous transfers occurred");
+
+        $display(
+            "Coverage: in=%0d out=%0d stalls=%0d simultaneous=%0d",
+            input_xfers,
+            output_xfers,
+            stall_cycles,
+            simultaneous_xfers
+        );
+
+        $display(
+            "FIFO events: empty=%0d full=%0d read_wrap=%0d write_wrap=%0d",
+            reached_empty,
+            reached_full,
+            read_wrap,
+            write_wrap
+        );
+
+        $display("PASS");
+        //-----------------------------------------------
+
         $finish;
     end
 endmodule
