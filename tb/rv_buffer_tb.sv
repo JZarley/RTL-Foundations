@@ -38,7 +38,7 @@ module rv_buffer_tb;
 
     initial begin
         $dumpfile("waveform.vcd");
-        $dumpvars(1, "rtl/rv_buffer.sv");
+        $dumpvars(1, rv_buffer_tb);
     end
 
     property stalled_output_stable;
