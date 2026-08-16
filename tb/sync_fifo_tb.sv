@@ -404,6 +404,9 @@ module sync_fifo_tb;
 
         assert (expected_queue.size() == 0)
             else $fatal(1, "Reference queue not cleared by reset");
+
+        send_one(32'h1234_4321);
+        consume_one();
         //-----------------------------------------------
 
 
